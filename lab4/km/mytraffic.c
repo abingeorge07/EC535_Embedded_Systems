@@ -123,7 +123,7 @@ static int mytraffic_init(void)
 		goto fail; 
 	}
 
-	// Request IRQs
+	// Map the GPIOs to Interrupt Request numbers
 	btn0_irq = gpio_to_irq(BTN0);
 	if(btn0_irq < 0) {
 		printk(KERN_ALERT "BTN0 can't be mapped to an interrupt line\n");
@@ -137,6 +137,7 @@ static int mytraffic_init(void)
 	}
 
 	
+	// Install interrupt handlers
 	err = request_irq(btn0_irq, btn0_handler, 
 			IRQF_TRIGGER_RISING, "btn0", NULL);
 
