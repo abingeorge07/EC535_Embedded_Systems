@@ -216,8 +216,10 @@ static irqreturn_t btn0_handler(int irq, void * dev_id) {
 			break;
 		case FLASHING_RED:
 			mode = FLASHING_RED;
+			break;
 		case FLASHING_YELLOW:
 			mode = NORMAL;
+			break;
 	}
 	return IRQ_HANDLED;
 }
