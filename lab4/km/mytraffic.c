@@ -143,6 +143,7 @@ static int mytraffic_init(void)
 
 	if(err) {
 		printk(KERN_ALERT "Couldn't install interrupt handler for BTN0\n");
+		goto fail;
 	}
 
 	err = request_irq(btn1_irq, btn1_handler, 
@@ -150,6 +151,7 @@ static int mytraffic_init(void)
 
 	if(err) {
 		printk(KERN_ALERT "Couldn't install interrupt handler for BTN1\n");
+		goto fail;
 	}
 
 	printk(KERN_ALERT "Inserting mytraffic module\n"); 
