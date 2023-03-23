@@ -210,7 +210,9 @@ static void mytraffic_exit(void)
 {
 	/* Freeing the major number */
 	unregister_chrdev(mytraffic_major, "mytraffic");
-	if(globalVar)
+	if(globalVar) {
+		kfree(globalVar);
+	}
 
 	free_irq(btn0_irq, NULL);
 	free_irq(btn1_irq, NULL);
@@ -243,6 +245,33 @@ static int mytraffic_release(struct inode *inode, struct file *filp)
 static ssize_t mytraffic_read(struct file *filp, char *buf, 
 							size_t count, loff_t *f_pos)
 {
+	char kernelBuf[128];
+	char * bufPtr = kernelBuf;
+
+	bufPtr += sprintf(bufPtr, "[MODE]: ");
+	switch(globalVar->mode) {
+		case NORMAL:
+			bufPtr += sprintf(bufPtr, "Normal\n");
+			break;
+		case FLASHING_RED:
+			bufPtr += sprintf(bufPtr, "Flashing Red\n");
+			break;
+		case FLASHING_YELLOW:
+			bufPtr += sprintf(bufPtr, "Flashing yellow\n");
+			break;
+	}
+
+	bufPtr += sprintf(bufPtr, "[Current Cycle Rate]: %d HZ\n", globalVar->freq);
+
+	bufPtr += sprintf(bufPtr, "[Current Status (RED/YELLOW/Green)]: %d%d%d", 
+		gpio_get_value(RED_LED), gpio_get_value(YELLOW_LED), gpio_get_value(GREEN_LED));
+
+	bufPtr += sprintf(bufPtr, "[Pedestrian Present?]: %d", pedestrian_called);
+
+
+	if(copy_to_user(buf, kernelBuf, strlen(kernelBuf) + 1)) {
+		return -EFAULT;
+	}
 	return 0;
 }
 
