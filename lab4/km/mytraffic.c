@@ -94,8 +94,6 @@ static unsigned bite = 256;
 module_param(capacity, uint, S_IRUGO);
 module_param(bite, uint, S_IRUGO);
 
-/* Buffer to store data */
-static char *mytimer_buffer;
 /* Major number */
 static int mytraffic_major = 61;
 // if pedestrian is called
@@ -121,11 +119,11 @@ struct global{
     int freq;
     int time ;
     struct timer_list timer;
-  int counter;
-  int status;
+  int counter;  // coutner in cycle
+  int status; // if LED is on or off
 };
 
-static struct global* globalVar;
+static struct global* globalVar = NULL;
 
 
 
@@ -146,17 +144,6 @@ static int mytraffic_init(void)
 		return result;
 	}
 
-
-	/* Allocating for the buffer */
-	mytimer_buffer = kmalloc(capacity*3, GFP_KERNEL); 
-	if (!mytimer_buffer)
-	{ 
-		printk(KERN_ALERT "Insufficient kernel memory\n"); 
-		result = -ENOMEM;
-		goto fail; 
-	} 
-
-	memset(mytimer_buffer, 0, capacity*3);
 
 	// Request GPIO lines
 	err = gpio_request_array(gpios, ARRAY_SIZE(gpios));
@@ -223,8 +210,10 @@ static void mytraffic_exit(void)
 {
 	/* Freeing the major number */
 	unregister_chrdev(mytraffic_major, "mytraffic");
+	if(globalVar)
 
 	free_irq(btn0_irq, NULL);
+	free_irq(btn1_irq, NULL);
 	gpio_set_value(RED_LED, 0);
 	gpio_set_value(GREEN_LED, 0);
 	gpio_set_value(YELLOW_LED, 0);
@@ -265,6 +254,7 @@ static ssize_t mytraffic_write(struct file *filp, const char *buf,
 	long int freqNew; 
 	// checks if string to integer conversion works
 	int err;
+	char mytimer_buffer[32];
 
 	/* end of buffer reached */
 	if (*f_pos >= capacity)
@@ -365,6 +355,10 @@ void displayFun(struct timer_list* timer){
 	printk(KERN_ALERT "Reached Display Function");
 	#endif
 
+	if(pedestrian_called && globalVar->counter > 5) {
+		pedestrian_disp();
+	}
+
 	if(pedestrian_called == 0){
 		switch(globalVar -> mode){
 			
@@ -381,11 +375,6 @@ void displayFun(struct timer_list* timer){
 				break;
 		}  
 	}
-	else{
-		pedestrian_disp();
-	}
-
-
 }
 
 
@@ -394,6 +383,9 @@ void normal_disp(void){
 #if DEBUG
   printk(KERN_ALERT "NORMAL");
 #endif
+
+  if(globalVar->counter > 5)
+    globalVar -> counter = 0;
   
   if(globalVar->counter <3){
     
@@ -433,8 +425,6 @@ void normal_disp(void){
 
   }
 
-  if(globalVar->counter > 5)
-    globalVar -> counter = 0;
 
 
   mod_timer(&(globalVar->timer), jiffies+ msecs_to_jiffies(globalVar->time));
