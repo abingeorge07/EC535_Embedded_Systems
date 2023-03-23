@@ -28,7 +28,9 @@ Sources:
 #include <linux/gpio.h> // legacy GPIO interface
 #include <linux/gpio/consumer.h> // Gpio consumer interface
 #include <linux/interrupt.h>
-
+#include <linux/timer.h>
+#include <linux/jiffies.h>
+#include <linux/delay.h>
 
 // GPIO Numbers
 #define RED_LED  67 
@@ -57,6 +59,15 @@ static int mytraffic_init(void);
 static irqreturn_t btn0_handler(int irq, void * dev_id);
 static irqreturn_t btn1_handler(int irq, void * dev_id);
 
+
+// LED display functions
+void displayFun(struct timer_list* timer);
+void normal_disp(void);
+void red_disp(void);
+void yellow_disp(void);
+void pedestrian_disp(void);
+
+
 /* Structure that declares the usual file */
 /* access functions */
 struct file_operations mytraffic_fops = {
@@ -66,24 +77,28 @@ struct file_operations mytraffic_fops = {
 	release: mytraffic_release
 };
 
+// Mode of traffic light
 // Operation mode enum
 enum OperationalMode {
 	NORMAL,
 	FLASHING_RED,
-	FLASHING_YELLOW
+	FLASHING_YELLOW,
 };
 
 
 /* Declaration of the init and exit functions */
 module_init(mytraffic_init);
 module_exit(mytraffic_exit);
+static unsigned capacity = 256;
+static unsigned bite = 256;
+module_param(capacity, uint, S_IRUGO);
+module_param(bite, uint, S_IRUGO);
 
-/* Global variables of the driver */
+/* Buffer to store data */
+static char *mytimer_buffer;
 /* Major number */
 static int mytraffic_major = 61;
-// Mode of traffic light
-static enum OperationalMode mode;
-// 
+// if pedestrian is called
 static int pedestrian_called = 0;
 
 // BTN0 irq
@@ -93,18 +108,33 @@ static int btn1_irq;
 
 // GPIO Array
 static struct gpio gpios[] = {
-	{RED_LED,	 	GPIOF_OUT_INIT_LOW,	"Red LED" }, /* default to OFF */
+	{RED_LED,	GPIOF_OUT_INIT_LOW,	"Red LED" }, /* default to OFF */
 	{YELLOW_LED, 	GPIOF_OUT_INIT_LOW, "Yellow LED" }, /* default to OFF */
 	{GREEN_LED, 	GPIOF_OUT_INIT_LOW, "Green LED"   }, /* default to OFF */
 	{BTN0, 		GPIOF_DIR_IN,  		"BTN0"  }, 
-	{BTN1, 		GPIOF_DIR_IN,  		"BTN1"  }
+	{BTN1, 		GPIOF_DIR_IN,  		"BTN1"  },
 };
+
+// Global variables all stored in a struct
+struct global{
+  enum OperationalMode mode;
+    int freq;
+    int time ;
+    struct timer_list timer;
+  int counter;
+  int status;
+};
+
+static struct global* globalVar;
+
 
 
 static int mytraffic_init(void)
 {
 	int result;
 	int err;
+
+	
 
 
 	/* Registering device */
@@ -115,6 +145,18 @@ static int mytraffic_init(void)
 			"mytraffic: cannot obtain major number %d\n", mytraffic_major);
 		return result;
 	}
+
+
+	/* Allocating for the buffer */
+	mytimer_buffer = kmalloc(capacity*3, GFP_KERNEL); 
+	if (!mytimer_buffer)
+	{ 
+		printk(KERN_ALERT "Insufficient kernel memory\n"); 
+		result = -ENOMEM;
+		goto fail; 
+	} 
+
+	memset(mytimer_buffer, 0, capacity*3);
 
 	// Request GPIO lines
 	err = gpio_request_array(gpios, ARRAY_SIZE(gpios));
@@ -155,6 +197,21 @@ static int mytraffic_init(void)
 	}
 
 	printk(KERN_ALERT "Inserting mytraffic module\n"); 
+
+	globalVar = (struct global*) kmalloc(sizeof(struct global), GFP_KERNEL);
+	globalVar-> freq = 1;
+	globalVar-> time = 1000; // in milliseconds
+	globalVar -> mode = NORMAL;
+	globalVar -> counter = 0;
+	globalVar -> status = 0;
+	timer_setup(&(globalVar->timer), displayFun, 0);
+	mod_timer(&(globalVar->timer), jiffies+ msecs_to_jiffies(globalVar->time));
+
+	
+
+#if DEBUG
+	printk(KERN_ALERT "Started timer");
+#endif
 	return 0;
 
 fail: 
@@ -203,34 +260,262 @@ static ssize_t mytraffic_read(struct file *filp, char *buf,
 static ssize_t mytraffic_write(struct file *filp, const char *buf,
 							size_t count, loff_t *f_pos)
 {
-	return 0;
+
+	// new frequency values
+	long int freqNew; 
+	// checks if string to integer conversion works
+	int err;
+
+	/* end of buffer reached */
+	if (*f_pos >= capacity)
+	{
+		return -ENOSPC;
+	}
+
+	/* do not eat more than a bite */
+	if (count > bite) count = bite;
+
+	/* do not go over the end */
+	if (count > capacity - *f_pos)
+		count = capacity - *f_pos;
+
+	if (copy_from_user(mytimer_buffer + *f_pos, buf, count))
+	{
+		return -EFAULT;
+	}
+
+	// this ensures that the previous buffer will not have an impact on the current buffer
+    mytimer_buffer[count] = '\0';
+
+
+	// converts the string to an integer
+	err = kstrtol(mytimer_buffer, 10, &freqNew);
+
+	if(err != 0){
+		printk(KERN_ALERT "Error occured in conversion\n");
+	}
+
+	globalVar->freq = freqNew;
+	globalVar->time = 1000/freqNew;
+
+	#if DEBUG
+		printk(KERN_ALERT "FREQ = %ld\n", freqNew);
+	#endif
+
+	*f_pos = 0;
+    return count;
 }
 
 static irqreturn_t btn0_handler(int irq, void * dev_id) {
 
 #if DEBUG
-	printk(KERN_INFO "Switching flashing modes\n");
+	printk(KERN_ALERT "Switching flashing modes\n");
 #endif
 
-	switch(mode) {
+	switch(globalVar->mode) {
 		case NORMAL:
-			mode = FLASHING_RED;
+			globalVar->mode = FLASHING_RED;
 			break;
 		case FLASHING_RED:
-			mode = FLASHING_RED;
+			globalVar->mode = FLASHING_YELLOW;
 			break;
 		case FLASHING_YELLOW:
-			mode = NORMAL;
+			globalVar->mode = NORMAL;
 			break;
 	}
+	// resets the traffic light
+	gpio_set_value(GREEN_LED, 0);
+	gpio_set_value(RED_LED, 0);
+	gpio_set_value(YELLOW_LED, 0);
+
+	globalVar->counter = 0;
+	globalVar->status = 0;
+	displayFun(&(globalVar->timer));
 	return IRQ_HANDLED;
 }
 
 static irqreturn_t btn1_handler(int irq, void * dev_id) {
 
 #if DEBUG
-	printk(KERN_INFO "Pedestrian Called");
+	printk(KERN_ALERT "Pedestrian Called");
 #endif
-	pedestrian_called = 1;
+
+	if(globalVar->mode == NORMAL){
+		pedestrian_called = 1;
+
+		// resets the traffic light
+		gpio_set_value(GREEN_LED, 0);
+		gpio_set_value(RED_LED, 0);
+		gpio_set_value(YELLOW_LED, 0);
+
+		globalVar->counter = 0;
+		globalVar->status = 0;
+		displayFun(&(globalVar->timer));	
+	}
+
+
 	return IRQ_HANDLED;
+}
+
+
+
+void displayFun(struct timer_list* timer){
+  
+	#if DEBUG
+	printk(KERN_ALERT "Reached Display Function");
+	#endif
+
+	if(pedestrian_called == 0){
+		switch(globalVar -> mode){
+			
+			case NORMAL:
+				normal_disp();
+				break;
+
+			case FLASHING_RED:
+				red_disp();
+				break;
+			
+			case FLASHING_YELLOW:
+				yellow_disp();
+				break;
+		}  
+	}
+	else{
+		pedestrian_disp();
+	}
+
+
+}
+
+
+void normal_disp(void){
+
+#if DEBUG
+  printk(KERN_ALERT "NORMAL");
+#endif
+  
+  if(globalVar->counter <3){
+    
+  if(globalVar->status == 0){
+      gpio_set_value(GREEN_LED, 1);
+      globalVar -> status = 1;
+       
+  }else{
+      gpio_set_value(GREEN_LED, 0);
+      globalVar -> status = 0;
+      (globalVar -> counter)++;
+    }
+       
+    
+  }else if(globalVar -> counter < 4){
+    
+  if(globalVar->status == 0){
+      gpio_set_value(YELLOW_LED, 1);
+      globalVar -> status = 1;
+   
+  }else{
+      gpio_set_value(YELLOW_LED, 0);
+      (globalVar -> counter)++;
+      globalVar -> status = 0;
+    }
+  }
+  else{
+    
+    if(globalVar->status == 0){
+      gpio_set_value(RED_LED, 1);
+      globalVar -> status = 1;
+    }else{
+      gpio_set_value(RED_LED, 0);
+      globalVar -> status = 0;
+      (globalVar -> counter)++;
+    }
+
+  }
+
+  if(globalVar->counter > 5)
+    globalVar -> counter = 0;
+
+
+  mod_timer(&(globalVar->timer), jiffies+ msecs_to_jiffies(globalVar->time));
+
+  
+}
+
+void red_disp(void){
+
+#if DEBUG
+  printk(KERN_ALERT "RED");
+#endif
+
+	if(globalVar->status == 0){
+		gpio_set_value(RED_LED, 1);
+		globalVar -> status = 1;
+    }else{
+		gpio_set_value(RED_LED, 0);
+		globalVar -> status = 0;
+    }
+
+	mod_timer(&(globalVar->timer), jiffies+ msecs_to_jiffies(globalVar->time));
+
+}
+
+
+
+void yellow_disp(void){
+
+#if DEBUG
+  printk(KERN_ALERT "YELLOW");
+#endif
+
+	if(globalVar->status == 0){
+		gpio_set_value(YELLOW_LED, 1);
+		globalVar -> status = 1;
+    }else{
+		gpio_set_value(YELLOW_LED, 0);
+		globalVar -> status = 0;
+    }
+
+	mod_timer(&(globalVar->timer), jiffies+ msecs_to_jiffies(globalVar->time));
+
+}
+
+
+void pedestrian_disp(void){
+
+	#if DEBUG
+		printk(KERN_ALERT "PEDESTRIAN");
+	#endif
+
+	
+	if(globalVar->counter < 5){
+		if(globalVar->status == 0){
+			gpio_set_value(RED_LED, 1);
+			gpio_set_value(YELLOW_LED, 1);
+			globalVar->status = 1;
+		}
+		else{
+			gpio_set_value(RED_LED, 0);
+			gpio_set_value(YELLOW_LED, 0);
+			globalVar->status = 0;
+			(globalVar->counter)++;
+		}
+		
+	}
+	else{
+	// probably wont run but just a safety net
+		pedestrian_called = 0;
+		globalVar->mode = NORMAL;
+		globalVar->status = 0;
+	}
+
+	if(globalVar->counter > 4){
+		pedestrian_called = 0;
+		globalVar->mode = NORMAL;
+		globalVar->status = 0;
+		globalVar->counter = 0;
+	}
+
+	mod_timer(&(globalVar->timer), jiffies+ msecs_to_jiffies(globalVar->time));
+
 }
