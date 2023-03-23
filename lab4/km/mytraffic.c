@@ -39,7 +39,7 @@ Sources:
 #define BTN0  26
 #define BTN1  46 
 
-#define DEBUG 1
+#define DEBUG 0
 
 
 MODULE_AUTHOR("Abin George, Justin Sadler");
@@ -83,6 +83,7 @@ enum OperationalMode {
 	NORMAL,
 	FLASHING_RED,
 	FLASHING_YELLOW,
+	PEDESTRIAN,
 };
 
 
@@ -245,7 +246,7 @@ static int mytraffic_release(struct inode *inode, struct file *filp)
 static ssize_t mytraffic_read(struct file *filp, char *buf, 
 							size_t count, loff_t *f_pos)
 {
-	char kernelBuf[128];
+        char kernelBuf[128];
 	char * bufPtr = kernelBuf;
 
 	bufPtr += sprintf(bufPtr, "[MODE]: ");
@@ -272,6 +273,7 @@ static ssize_t mytraffic_read(struct file *filp, char *buf,
 	if(copy_to_user(buf, kernelBuf, strlen(kernelBuf) + 1)) {
 		return -EFAULT;
 	}
+     
 	return 0;
 }
 
@@ -304,7 +306,7 @@ static ssize_t mytraffic_write(struct file *filp, const char *buf,
 	}
 
 	// this ensures that the previous buffer will not have an impact on the current buffer
-    mytimer_buffer[count] = '\0';
+        mytimer_buffer[count] = '\0';
 
 
 	// converts the string to an integer
@@ -341,6 +343,8 @@ static irqreturn_t btn0_handler(int irq, void * dev_id) {
 		case FLASHING_YELLOW:
 			globalVar->mode = NORMAL;
 			break;
+         	case PEDESTRIAN:
+		        break;
 	}
 	// resets the traffic light
 	gpio_set_value(GREEN_LED, 0);
@@ -359,17 +363,17 @@ static irqreturn_t btn1_handler(int irq, void * dev_id) {
 	printk(KERN_ALERT "Pedestrian Called");
 #endif
 
-	if(globalVar->mode == NORMAL){
+	if(globalVar->mode == NORMAL || globalVar -> mode == PEDESTRIAN){
 		pedestrian_called = 1;
 
 		// resets the traffic light
-		gpio_set_value(GREEN_LED, 0);
-		gpio_set_value(RED_LED, 0);
-		gpio_set_value(YELLOW_LED, 0);
+		//gpio_set_value(GREEN_LED, 0);
+		//gpio_set_value(RED_LED, 0);
+		//gpio_set_value(YELLOW_LED, 0);
 
-		globalVar->counter = 0;
-		globalVar->status = 0;
-		displayFun(&(globalVar->timer));	
+		//globalVar->counter = 0;
+		//globalVar->status = 0;
+		//displayFun(&(globalVar->timer));	
 	}
 
 
@@ -384,11 +388,19 @@ void displayFun(struct timer_list* timer){
 	printk(KERN_ALERT "Reached Display Function");
 	#endif
 
-	if(pedestrian_called && globalVar->counter > 5) {
-		pedestrian_disp();
+	if(pedestrian_called && globalVar->counter > 5 && globalVar-> mode == NORMAL) {
+	         globalVar->counter = 0;
+		 globalVar->mode = PEDESTRIAN;
+	         pedestrian_disp();
 	}
 
-	if(pedestrian_called == 0){
+	else if(pedestrian_called && globalVar->mode == PEDESTRIAN){
+	        globalVar->counter = 0;
+		 globalVar->mode = PEDESTRIAN;
+	         pedestrian_disp();
+	}
+
+	else{
 		switch(globalVar -> mode){
 			
 			case NORMAL:
@@ -402,6 +414,9 @@ void displayFun(struct timer_list* timer){
 			case FLASHING_YELLOW:
 				yellow_disp();
 				break;
+		        case PEDESTRIAN:
+			        pedestrian_disp();
+                                break;
 		}  
 	}
 }
@@ -509,6 +524,7 @@ void pedestrian_disp(void){
 	
 	if(globalVar->counter < 5){
 		if(globalVar->status == 0){
+		        pedestrian_called = 0;
 			gpio_set_value(RED_LED, 1);
 			gpio_set_value(YELLOW_LED, 1);
 			globalVar->status = 1;
@@ -523,13 +539,13 @@ void pedestrian_disp(void){
 	}
 	else{
 	// probably wont run but just a safety net
-		pedestrian_called = 0;
+	//	pedestrian_called = 0;
 		globalVar->mode = NORMAL;
 		globalVar->status = 0;
 	}
 
 	if(globalVar->counter > 4){
-		pedestrian_called = 0;
+	  //	pedestrian_called = 0;
 		globalVar->mode = NORMAL;
 		globalVar->status = 0;
 		globalVar->counter = 0;
