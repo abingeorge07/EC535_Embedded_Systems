@@ -263,10 +263,10 @@ static ssize_t mytraffic_read(struct file *filp, char *buf,
 
 	bufPtr += sprintf(bufPtr, "[Current Cycle Rate]: %d HZ\n", globalVar->freq);
 
-	bufPtr += sprintf(bufPtr, "[Current Status (RED/YELLOW/Green)]: %d%d%d", 
+	bufPtr += sprintf(bufPtr, "[Current Status (RED/YELLOW/Green)]: %d%d%d\n", 
 		gpio_get_value(RED_LED), gpio_get_value(YELLOW_LED), gpio_get_value(GREEN_LED));
 
-	bufPtr += sprintf(bufPtr, "[Pedestrian Present?]: %d", pedestrian_called);
+	bufPtr += sprintf(bufPtr, "[Pedestrian Present?]: %d\n", pedestrian_called);
 
 
 	if(copy_to_user(buf, kernelBuf, strlen(kernelBuf) + 1)) {
