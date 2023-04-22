@@ -40,7 +40,7 @@ Sources:
 #define BTN1  46 
 
 #define DEBUG 0
-
+#define MIN(X,Y) ((X) < (Y)) ? (X) : (Y)
 
 MODULE_AUTHOR("Abin George, Justin Sadler");
 MODULE_DESCRIPTION("Traffic Light Driver");
@@ -212,6 +212,7 @@ static void mytraffic_exit(void)
 	/* Freeing the major number */
 	unregister_chrdev(mytraffic_major, "mytraffic");
 	if(globalVar) {
+		del_timer(&(globalVar->timer));
 		kfree(globalVar);
 	}
 
@@ -248,10 +249,12 @@ static ssize_t mytraffic_read(struct file *filp, char *buf,
 {
         char kernelBuf[128];
 	char * bufPtr = kernelBuf;
+	int length;
 
 	bufPtr += sprintf(bufPtr, "[MODE]: ");
 	switch(globalVar->mode) {
 		case NORMAL:
+		case PEDESTRIAN:
 			bufPtr += sprintf(bufPtr, "Normal\n");
 			break;
 		case FLASHING_RED:
@@ -269,12 +272,20 @@ static ssize_t mytraffic_read(struct file *filp, char *buf,
 
 	bufPtr += sprintf(bufPtr, "[Pedestrian Present?]: %d\n", pedestrian_called);
 
+	// Do not go over the end	
+	length = bufPtr - kernelBuf;
+	if(*f_pos > length) {
+		return 0;	
+	}
+	if(count > length - *f_pos)
+		count = length - *f_pos;
+	
 
-	if(copy_to_user(buf, kernelBuf, strlen(kernelBuf) + 1)) {
+	if(copy_to_user(buf, kernelBuf + *f_pos, count)) {
 		return -EFAULT;
 	}
-     
-	return 0;
+     	*f_pos += count;
+	return count;
 }
 
 static ssize_t mytraffic_write(struct file *filp, const char *buf,
@@ -344,6 +355,7 @@ static irqreturn_t btn0_handler(int irq, void * dev_id) {
 			globalVar->mode = NORMAL;
 			break;
          	case PEDESTRIAN:
+			return IRQ_HANDLED;
 		        break;
 	}
 	// resets the traffic light
@@ -366,14 +378,6 @@ static irqreturn_t btn1_handler(int irq, void * dev_id) {
 	if(globalVar->mode == NORMAL || globalVar -> mode == PEDESTRIAN){
 		pedestrian_called = 1;
 
-		// resets the traffic light
-		//gpio_set_value(GREEN_LED, 0);
-		//gpio_set_value(RED_LED, 0);
-		//gpio_set_value(YELLOW_LED, 0);
-
-		//globalVar->counter = 0;
-		//globalVar->status = 0;
-		//displayFun(&(globalVar->timer));	
 	}
 
 
@@ -388,16 +392,16 @@ void displayFun(struct timer_list* timer){
 	printk(KERN_ALERT "Reached Display Function");
 	#endif
 
-	if(pedestrian_called && globalVar->counter > 5 && globalVar-> mode == NORMAL) {
-	         globalVar->counter = 0;
-		 globalVar->mode = PEDESTRIAN;
-	         pedestrian_disp();
+	if(pedestrian_called && globalVar->counter == 4  && globalVar-> mode == NORMAL) {
+			globalVar->counter = 0;
+		 	globalVar->mode = PEDESTRIAN;
+			pedestrian_disp();
 	}
 
 	else if(pedestrian_called && globalVar->mode == PEDESTRIAN){
-	        globalVar->counter = 0;
-		 globalVar->mode = PEDESTRIAN;
-	         pedestrian_disp();
+		globalVar->counter = 0;
+		globalVar->mode = PEDESTRIAN;
+		pedestrian_disp();
 	}
 
 	else{
@@ -414,9 +418,9 @@ void displayFun(struct timer_list* timer){
 			case FLASHING_YELLOW:
 				yellow_disp();
 				break;
-		        case PEDESTRIAN:
-			        pedestrian_disp();
-                                break;
+            case PEDESTRIAN:
+                pedestrian_disp();
+                break;
 		}  
 	}
 }
@@ -432,41 +436,28 @@ void normal_disp(void){
     globalVar -> counter = 0;
   
   if(globalVar->counter <3){
-    
-  if(globalVar->status == 0){
-      gpio_set_value(GREEN_LED, 1);
-      globalVar -> status = 1;
-       
-  }else{
-      gpio_set_value(GREEN_LED, 0);
-      globalVar -> status = 0;
-      (globalVar -> counter)++;
-    }
+	gpio_set_value(GREEN_LED, 1);
+	gpio_set_value(YELLOW_LED, 0);
+	gpio_set_value(RED_LED, 0);
+    (globalVar -> counter)++;
+
        
     
   }else if(globalVar -> counter < 4){
+
+	gpio_set_value(GREEN_LED, 0);
+	gpio_set_value(YELLOW_LED, 1);
+	gpio_set_value(RED_LED, 0);
+    (globalVar -> counter)++;
     
-  if(globalVar->status == 0){
-      gpio_set_value(YELLOW_LED, 1);
-      globalVar -> status = 1;
-   
-  }else{
-      gpio_set_value(YELLOW_LED, 0);
-      (globalVar -> counter)++;
-      globalVar -> status = 0;
-    }
   }
   else{
-    
-    if(globalVar->status == 0){
-      gpio_set_value(RED_LED, 1);
-      globalVar -> status = 1;
-    }else{
-      gpio_set_value(RED_LED, 0);
-      globalVar -> status = 0;
-      (globalVar -> counter)++;
-    }
 
+	gpio_set_value(GREEN_LED, 0);
+	gpio_set_value(YELLOW_LED, 0);
+	gpio_set_value(RED_LED, 1);
+    (globalVar -> counter)++;
+    
   }
 
 
