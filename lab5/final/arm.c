@@ -24,7 +24,11 @@
 #include <linux/jiffies.h>
 #include <linux/delay.h>
 #include <linux/pwm.h>
-#include <linux/gpio/driver.h>
+#include <linux/gpio/driver.h> 
+// NOTE: ADded min, max macros
+/*
+Changed globalServo to stack from heap
+*/
 
 MODULE_AUTHOR("Abin George, Justin Sadler");
 MODULE_DESCRIPTION("Arm");
@@ -35,8 +39,8 @@ MODULE_LICENSE("GPL");
 #define DEBUG_SERVO 0
 
 // GPIOS to control servo
-#define WRIST_GPIO 67
-#define ELBOW_GPIO 68
+#define ELBOW_GPIO 67
+#define WRIST_GPIO 68
 
 // Keyboard Interrupts Definitions
 #define KEY_UP 		0xF603
@@ -64,6 +68,12 @@ MODULE_LICENSE("GPL");
 #define TIME_STAGE	3000 // in milliseconds
 
 
+// Useful Macros
+#define MIN(X,Y) ((X) < (Y)) ? (X) : (Y)
+#define MAX(X,Y) ((X) > (Y)) ? (X) : (Y)
+
+
+
 // General Prototypes
 static void __exit arm_exit(void);
 static int __init arm_init(void);
@@ -72,8 +82,8 @@ static int __init arm_init(void);
 static int keys_pressed(struct notifier_block *, unsigned long, void *); // Callback function for the Notification Chain
 
 // Servo Control Prototypes
-static void wristServo(struct timer_list* mytimer);
-static void elbowServo(struct timer_list* mytimer);
+static void wristServoFunction(struct timer_list* mytimer);
+static void elbowServoFunction(struct timer_list* mytimer);
 
 // Sequence Prototypes
 static void sequenceFun(struct timer_list* mytimer);
@@ -107,7 +117,11 @@ struct servo{
 	struct timer_list timer;
 };
 	 
-struct servo* globalServo = NULL;
+int setServos = 0;
+struct servo wristServo;
+struct servo elbowServo;
+
+//struct servo globalServo[2];
 
 
 // Struct for sequence
@@ -120,7 +134,7 @@ struct sequence {
 	struct timer_list sequenceTimer;
 };
 
-struct sequence* globalSequence = NULL;
+struct sequence * globalSequence = NULL;
 
 
 // Init module
@@ -145,19 +159,17 @@ static int __init arm_init(void){
 		goto fail; 
 	}
 	
-	// create servo struct
-	globalServo = (struct servo*) kmalloc(sizeof(struct servo*)*2, GFP_KERNEL);
-	
-	globalServo[WRIST].dutyTime = MIN_DUTYCYCLE;
-	globalServo[ELBOW].dutyTime = MIN_DUTYCYCLE;	
+	wristServo.dutyTime = MIN_DUTYCYCLE;
+	elbowServo.dutyTime = MIN_DUTYCYCLE;	
 	
 	// timer setup
-	timer_setup(&(globalServo[WRIST].timer), wristServo, 0);
-	timer_setup(&(globalServo[ELBOW].timer), elbowServo, 0);
+	timer_setup(&(wristServo.timer), wristServoFunction, 0);
+	timer_setup(&(elbowServo.timer), elbowServoFunction, 0);
 
 	// starting timer
-	mod_timer(&(globalServo[WRIST].timer), jiffies+ msecs_to_jiffies(1000));
-	mod_timer(&(globalServo[ELBOW].timer), jiffies+ msecs_to_jiffies(1000));
+	mod_timer(&(wristServo.timer), jiffies+ msecs_to_jiffies(1000));
+	mod_timer(&(elbowServo.timer), jiffies+ msecs_to_jiffies(1000));
+	setServos = 1;
 #if DEBUG
 	printk(KERN_ALERT "Servo initialization successfull\n");
 #endif
@@ -183,10 +195,9 @@ static void __exit arm_exit(void){
 	// removing all the keyboard logger resources
 	unregister_keyboard_notifier(&nb);
 	gpio_free_array(gpios, ARRAY_SIZE(gpios));
-	if(globalServo) {
-		del_timer(&(globalServo[WRIST].timer));
-		del_timer(&(globalServo[ELBOW].timer));
-		kfree(globalServo);
+	if(setServos) {
+		del_timer(&(wristServo.timer));
+		del_timer(&(elbowServo.timer));
 	}
 	
 	if(globalSequence){
@@ -205,7 +216,6 @@ static void __exit arm_exit(void){
 // Keyboard interrupt main function
 static int keys_pressed(struct notifier_block *nb, unsigned long action, void *data) {
 	struct keyboard_notifier_param *param = data;
-	int temp;
 	
 	// We are only interested in certain keys
 	if (action == KBD_KEYSYM && param->down && param->shift == 0) {
@@ -214,47 +224,32 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			#if DEBUG
 			printk(KERN_ALERT "UP\n");
 			#endif
-			
-			temp = globalServo[WRIST].dutyTime + STEP;
-			if(temp >= MAX_DUTYCYCLE)
-				temp = MAX_DUTYCYCLE;
-			
-			globalServo[WRIST].dutyTime = temp;
-				
+			wristServo.dutyTime += STEP;
+			wristServo.dutyTime = MIN(MAX_DUTYCYCLE, wristServo.dutyTime);
+
 		} else if(param->value == KEY_DOWN) {
 			#if DEBUG
 			printk(KERN_ALERT "DOWN\n");
 			#endif
 
-			temp = globalServo[WRIST].dutyTime - STEP;
-			if(temp <= MIN_DUTYCYCLE)
-				temp = MIN_DUTYCYCLE;
-			
-			globalServo[WRIST].dutyTime = temp;
+			wristServo.dutyTime -= STEP;
+			wristServo.dutyTime = MAX(MIN_DUTYCYCLE, wristServo.dutyTime);
 
 		} else if(param->value == KEY_LEFT) {
 			#if DEBUG
 			printk(KERN_ALERT "LEFT\n");
 			#endif
 
-			temp = globalServo[ELBOW].dutyTime - STEP;
-			if(temp <= MIN_DUTYCYCLE)
-				temp = MIN_DUTYCYCLE;
-			
-			globalServo[ELBOW].dutyTime = temp;
-
+			elbowServo.dutyTime -= STEP;
+			elbowServo.dutyTime = MAX(MIN_DUTYCYCLE, elbowServo.dutyTime);
 
 		} else if(param->value == KEY_RIGHT) {
 			#if DEBUG
 			printk(KERN_ALERT "RIGHT\n");
 			#endif
-
 			
-			temp = globalServo[ELBOW].dutyTime + STEP;
-			if(temp >= MAX_DUTYCYCLE)
-				temp = MAX_DUTYCYCLE;
-			
-			globalServo[ELBOW].dutyTime = temp;
+			elbowServo.dutyTime += STEP;
+			elbowServo.dutyTime = MIN(MAX_DUTYCYCLE, elbowServo.dutyTime);
 
 
 		} else if(param->value == KEY_1) {
@@ -262,9 +257,9 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			printk(KERN_ALERT "Saved state 1\n");
 			#endif
 			
-			globalSequence->TOTAL = (globalSequence->TOTAL < 1) ? 1 : globalSequence->TOTAL;
-			globalSequence->MOTOR_PWM[WRIST][0] = globalServo[WRIST].dutyTime;
-			globalSequence->MOTOR_PWM[ELBOW][0] = globalServo[ELBOW].dutyTime;
+			globalSequence->TOTAL = MAX(1, globalSequence->TOTAL);
+			globalSequence->MOTOR_PWM[WRIST][0] = wristServo.dutyTime;
+			globalSequence->MOTOR_PWM[ELBOW][0] = elbowServo.dutyTime;
 			globalSequence->SAFETY[0] = 1;			
 
 		} else if(param->value == KEY_2) {
@@ -272,33 +267,33 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			printk(KERN_ALERT "Saved state 2\n");
 			#endif
 			
-			globalSequence->MOTOR_PWM[WRIST][1] = globalServo[WRIST].dutyTime;
-			globalSequence->MOTOR_PWM[ELBOW][1] = globalServo[ELBOW].dutyTime;
+			globalSequence->TOTAL = MAX(2, globalSequence->TOTAL);
+			globalSequence->MOTOR_PWM[WRIST][1] = wristServo.dutyTime;
+			globalSequence->MOTOR_PWM[ELBOW][1] = elbowServo.dutyTime;
 			globalSequence->SAFETY[1] = 1;
 
-			globalSequence->TOTAL = (globalSequence->TOTAL < 2) ? 2 : globalSequence->TOTAL;
 
 		} else if(param->value == KEY_3) {
 			#if DEBUG
 			printk(KERN_ALERT "Saved state 3\n");
 			#endif
 
-			globalSequence->MOTOR_PWM[WRIST][2] = globalServo[WRIST].dutyTime;
-			globalSequence->MOTOR_PWM[ELBOW][2] = globalServo[ELBOW].dutyTime;
+			globalSequence->TOTAL = MAX(3, globalSequence->TOTAL);
+			globalSequence->MOTOR_PWM[WRIST][2] = wristServo.dutyTime;
+			globalSequence->MOTOR_PWM[ELBOW][2] = elbowServo.dutyTime;
 			globalSequence->SAFETY[2] = 1;
 			
-			globalSequence->TOTAL = (globalSequence->TOTAL < 3) ? 3 : globalSequence->TOTAL;
+			//globalSequence->TOTAL = (globalSequence->TOTAL < 3) ? 3 : globalSequence->TOTAL;
 
 		} else if(param->value == KEY_4) {
 			#if DEBUG
 			printk(KERN_ALERT "Saved state 4\n");
 			#endif
 
-			globalSequence->MOTOR_PWM[WRIST][3] = globalServo[WRIST].dutyTime;
-			globalSequence->MOTOR_PWM[ELBOW][3] = globalServo[ELBOW].dutyTime;
-			globalSequence->SAFETY[3] = 1;
-
 			globalSequence->TOTAL = 4;
+			globalSequence->MOTOR_PWM[WRIST][3] = wristServo.dutyTime;
+			globalSequence->MOTOR_PWM[ELBOW][3] = elbowServo.dutyTime;
+			globalSequence->SAFETY[3] = 1;
 
 
 		}else if(param->value == KEY_ENTER) {
@@ -337,36 +332,36 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 
 
 // wristServo control
-static void wristServo(struct timer_list* timer){
+static void wristServoFunction(struct timer_list* timer){
 	
 	gpio_set_value(WRIST_GPIO, 1);
-	udelay(globalServo[WRIST].dutyTime);
+	udelay(wristServo.dutyTime);
 	gpio_set_value(WRIST_GPIO, 0);
 
 
 	#if DEBUG_SERVO
-	printk(KERN_ALERT "WRIST PWM is %d\n", globalServo[WRIST].dutyTime);
+	printk(KERN_ALERT "WRIST PWM is %d\n", wristServo.dutyTime);
 	#endif
 
 	// resetting timer
-	mod_timer(&(globalServo[WRIST].timer), jiffies+ usecs_to_jiffies(PERIOD-globalServo[WRIST].dutyTime));
+	mod_timer(&(wristServo.timer), jiffies+ usecs_to_jiffies(PERIOD-wristServo.dutyTime));
 
 }
 
 // elbowServo control
-static void elbowServo(struct timer_list* timer){
+static void elbowServoFunction(struct timer_list* timer){
 	
 	gpio_set_value(ELBOW_GPIO, 1);
-	udelay(globalServo[ELBOW].dutyTime);
+	udelay(elbowServo.dutyTime);
 	gpio_set_value(ELBOW_GPIO, 0);
 
 
 	#if DEBUG_SERVO
-	printk(KERN_ALERT "ELBOW PWM is %d\n", globalServo[ELBOW].dutyTime);
+	printk(KERN_ALERT "ELBOW PWM is %d\n", elbowServo.dutyTime);
 	#endif
 
 	// resetting timer
-	mod_timer(&(globalServo[ELBOW].timer), jiffies+ usecs_to_jiffies(PERIOD-globalServo[ELBOW].dutyTime));
+	mod_timer(&(elbowServo.timer), jiffies+ usecs_to_jiffies(PERIOD-elbowServo.dutyTime));
 }
 
 
@@ -379,8 +374,8 @@ static void sequenceFun(struct timer_list* mytimer){
 			globalSequence->STAGE = 0;
 		}
 		
-		globalServo[WRIST].dutyTime = globalSequence->MOTOR_PWM[WRIST][globalSequence->STAGE];
-		globalServo[ELBOW].dutyTime = globalSequence->MOTOR_PWM[ELBOW][globalSequence->STAGE];
+		wristServo.dutyTime = globalSequence->MOTOR_PWM[WRIST][globalSequence->STAGE];
+		elbowServo.dutyTime = globalSequence->MOTOR_PWM[ELBOW][globalSequence->STAGE];
 		
 		#if DEBUG
 			printk(KERN_ALERT "STAGE IS %d\n", globalSequence->STAGE);
@@ -408,54 +403,15 @@ void unsetMotors(void){
 // Safety Check
 int safetyCheck(void){
 	int i;
-	
+	int err = 0;
+
 	for(i=0 ; i<globalSequence->TOTAL; i++){
 		if(globalSequence->SAFETY[i] < 0){
-			return -1;
+			printk(KERN_ALERT "ERROR: Position %d is undefined\n", i + 1);
+			err = -1;
 		}
 
 	}
 	
-	return 0;
+	return err;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
