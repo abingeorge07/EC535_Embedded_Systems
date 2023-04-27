@@ -21,6 +21,8 @@
 #define KEY_4		0xF034
 #define KEY_ESC		0xF01B
 #define KEY_ENTER	0xF201
+#define KEY_GRIP	0xFB67
+#define KEY_UNGRIP	0xFB68
 
 // Prototype
 static void __exit keylog_exit(void);
@@ -63,6 +65,12 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			printk(KERN_ALERT "Starting sequence of moves\n");
 		} else if(param->value == KEY_ESC) {
 			printk(KERN_ALERT "Stopping sequence\n");
+		} else if(param->value == KEY_GRIP) {
+			printk(KERN_ALERT "Gripping\n");
+		} else if(param->value == KEY_UNGRIP) {
+			printk(KERN_ALERT "Ungripping\n");
+		} else {
+			printk(KERN_ALERT "Value pressed: %u\n", param->value);
 		}
 	}
 	return NOTIFY_OK; // We return NOTIFY_OK, as "Notification was processed correctly"
