@@ -33,7 +33,7 @@ MODULE_DESCRIPTION("Arm");
 MODULE_LICENSE("GPL");
 
 // Debugging purposes
-#define DEBUG 1
+#define DEBUG 0
 #define DEBUG_SERVO 0
 
 // GPIOS to control servo
@@ -63,19 +63,37 @@ MODULE_LICENSE("GPL");
 #define HS422_MAX_DUTYCYCLE	900
 #define SG90_MIN_DUTYCYCLE  200
 #define SG90_MAX_DUTYCYCLE  900
-#define HS422_STEP		50
-#define SG90_STEP		50
+#define PWM_STEP			50
 
 // Definitions for sequence
 #define TOT_SEQUENCE	4
 #define TOT_MOTOR 	3
-#define TIME_STAGE	3000 // in milliseconds
-
+#define TIME_STAGE	100 // in milliseconds
 
 // Useful Macros
 #define MIN(X,Y) ((X) < (Y)) ? (X) : (Y)
 #define MAX(X,Y) ((X) > (Y)) ? (X) : (Y)
+#define SIGN(X)	 ((X) == 0) ? 0 : ((X) < 0 ? -1 : 1)
 
+
+// STRUCTS 
+// Servo struct
+struct servo{
+	int dutyTime;
+	int targetDutyTime;
+	struct timer_list timer;
+};
+	 
+
+// Struct for sequence
+struct sequence {
+	int ACTIVE; //if it is active or not
+	int STAGE;  //what stage we are on now
+	int TOTAL;  //total number of stages assigned
+	int MOTOR_PWM[TOT_MOTOR][TOT_SEQUENCE];
+	int SAFETY[TOT_SEQUENCE];
+	struct timer_list sequenceTimer;
+};
 
 
 // General Prototypes
@@ -94,6 +112,8 @@ static void gripServoFunction(struct timer_list* mytimer);
 static void sequenceFun(struct timer_list* mytimer);
 void unsetMotors(void);
 int safetyCheck(void);
+int atTargetDutyTime(struct servo * servo_ptr);
+void setTargetDutyTimes(unsigned int stage);
 
 module_init(arm_init);
 module_exit(arm_exit);
@@ -118,25 +138,7 @@ enum SERVO {
 	GRIP,
 };
 
-// Servo struct
-struct servo{
-	int dutyTime;
-	struct timer_list timer;
-};
-	 
 
-//struct servo globalServo[2];
-
-
-// Struct for sequence
-struct sequence {
-	int ACTIVE; //if it is active or not
-	int STAGE;  //what stage we are on now
-	int TOTAL;  //total number of stages assigned
-	int MOTOR_PWM[TOT_MOTOR][TOT_SEQUENCE];
-	int SAFETY[TOT_SEQUENCE];
-	struct timer_list sequenceTimer;
-};
 
 struct sequence * globalSequence = NULL;
 struct servo * wristServo = NULL;
@@ -245,7 +247,7 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			#if DEBUG
 			printk(KERN_ALERT "UP\n");
 			#endif
-			wristServo->dutyTime += HS422_STEP;
+			wristServo->dutyTime += PWM_STEP;
 			wristServo->dutyTime = MIN(HS422_MAX_DUTYCYCLE, wristServo->dutyTime);
 
 		} else if(param->value == KEY_DOWN) {
@@ -253,7 +255,7 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			printk(KERN_ALERT "DOWN\n");
 			#endif
 
-			wristServo->dutyTime -= HS422_STEP;
+			wristServo->dutyTime -= PWM_STEP;
 			wristServo->dutyTime = MAX(HS422_MIN_DUTYCYCLE, wristServo->dutyTime);
 
 		} else if(param->value == KEY_LEFT) {
@@ -261,7 +263,7 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			printk(KERN_ALERT "LEFT\n");
 			#endif
 
-			elbowServo->dutyTime -= HS422_STEP;
+			elbowServo->dutyTime -= PWM_STEP;
 			elbowServo->dutyTime = MAX(HS422_MIN_DUTYCYCLE, elbowServo->dutyTime);
 
 		} else if(param->value == KEY_RIGHT) {
@@ -269,7 +271,7 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			printk(KERN_ALERT "RIGHT\n");
 			#endif
 			
-			elbowServo->dutyTime += HS422_STEP;
+			elbowServo->dutyTime += PWM_STEP;
 			elbowServo->dutyTime = MIN(HS422_MAX_DUTYCYCLE, elbowServo->dutyTime);
 
 
@@ -278,14 +280,14 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			printk(KERN_ALERT "GRIP\n");
 			#endif
 
-			gripServo->dutyTime -= SG90_STEP;
+			gripServo->dutyTime -= PWM_STEP;
 			gripServo->dutyTime = MIN(SG90_MAX_DUTYCYCLE, gripServo->dutyTime);
 		} else if(param->value == KEY_UNGRIP) {
 			#if DEBUG
 			printk(KERN_ALERT "UNGRIP\n");
 			#endif
 
-			gripServo->dutyTime += SG90_STEP;
+			gripServo->dutyTime += PWM_STEP;
 			gripServo->dutyTime = MAX(SG90_MIN_DUTYCYCLE, gripServo->dutyTime);
 		} else if(param->value == KEY_1) {
 			#if DEBUG
@@ -347,6 +349,7 @@ static int keys_pressed(struct notifier_block *nb, unsigned long action, void *d
 			if(err == 0){
 				globalSequence->ACTIVE = 1;
 				globalSequence->STAGE = 0;
+				setTargetDutyTimes(0);
 				mod_timer(&(globalSequence->sequenceTimer), jiffies+ msecs_to_jiffies(TIME_STAGE));
 			}else{
 				globalSequence->ACTIVE = 0;
@@ -425,21 +428,24 @@ static void gripServoFunction(struct timer_list* timer){
 static void sequenceFun(struct timer_list* mytimer){
 	
 	if(globalSequence->ACTIVE == 1){
-		if(globalSequence->STAGE >= globalSequence->TOTAL){
-			globalSequence->STAGE = 0;
-		}
 		
-		wristServo->dutyTime = globalSequence->MOTOR_PWM[WRIST][globalSequence->STAGE];
-		elbowServo->dutyTime = globalSequence->MOTOR_PWM[ELBOW][globalSequence->STAGE];
-		gripServo->dutyTime = globalSequence->MOTOR_PWM[GRIP][globalSequence->STAGE];
+		if(atTargetDutyTime(wristServo) && atTargetDutyTime(elbowServo) && atTargetDutyTime(wristServo)){
+			globalSequence->STAGE = (globalSequence->STAGE + 1) % globalSequence->TOTAL;
+			setTargetDutyTimes(globalSequence->STAGE);
+			mod_timer(&(globalSequence->sequenceTimer), jiffies+ msecs_to_jiffies(TIME_STAGE * 10));
+		} else {
+			wristServo->dutyTime += SIGN(wristServo->targetDutyTime - wristServo->dutyTime) * PWM_STEP;
+			elbowServo->dutyTime += SIGN(elbowServo->targetDutyTime - elbowServo->dutyTime) * PWM_STEP;
+			gripServo->dutyTime  += SIGN(gripServo ->targetDutyTime - gripServo ->dutyTime) * PWM_STEP;
+			mod_timer(&(globalSequence->sequenceTimer), jiffies+ msecs_to_jiffies(TIME_STAGE));
+			
+		}
 		
 		#if DEBUG
 			printk(KERN_ALERT "STAGE IS %d\n", globalSequence->STAGE);
 		#endif
 
-		globalSequence->STAGE = globalSequence->STAGE + 1;
 
-		mod_timer(&(globalSequence->sequenceTimer), jiffies+ msecs_to_jiffies(TIME_STAGE));
 	}
 	//else do nothing
 
@@ -459,15 +465,33 @@ void unsetMotors(void){
 // Safety Check
 int safetyCheck(void){
 	int i;
-	int err = 0;
+
+	if(globalSequence->TOTAL < 2) {
+		return -1;
+	}
 
 	for(i=0 ; i<globalSequence->TOTAL; i++){
 		if(globalSequence->SAFETY[i] < 0){
 			printk(KERN_ALERT "ERROR: Position %d is undefined\n", i + 1);
-			err = -1;
+			return -1;
 		}
 
 	}
+
+	return 0;
 	
-	return err;
+}
+
+void setTargetDutyTimes(unsigned int stage) {
+	if(stage >= globalSequence->TOTAL) {
+		printk(KERN_ALERT "Error: Invalid stage %u!", stage);
+		return;
+	}
+	wristServo->targetDutyTime = globalSequence->MOTOR_PWM[WRIST][stage];
+	elbowServo->targetDutyTime = globalSequence->MOTOR_PWM[ELBOW][stage];
+	gripServo->targetDutyTime  = globalSequence->MOTOR_PWM[GRIP][stage];
+}
+
+int atTargetDutyTime(struct servo * servo_ptr) {
+	return (servo_ptr->dutyTime == servo_ptr->targetDutyTime);
 }
