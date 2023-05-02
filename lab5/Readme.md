@@ -8,6 +8,8 @@ This project aims to develop a system for controlling robotic arm servos directl
 The code was run on a Beaglebone Black. 
 
 The arm directory contains the source code and Makefile for the linux kernel module. 
+
+[Watch our demo here](https://youtu.be/9GUjCSS79KA)
 ## Compiling
 
 ```
@@ -29,3 +31,4 @@ insmod arm.ko
 - Once the arm is in the desired position, define a sequence of moves using 1,2,3,4 keys (The Top Row of numbers) to define the current position in a sequence. 
 - Hit Enter to begin the sequence
 - Hit ESC to stop the sequence and start again!
+
