@@ -15,6 +15,8 @@ The arm directory contains the source code and Makefile for the linux kernel mod
 ```
 cd arm
 make
+cd ../rasterwindow
+make
 ```
 Plug in a USB keyboard to the BeagleBone Black. 
 
