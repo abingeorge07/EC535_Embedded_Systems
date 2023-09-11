@@ -34,3 +34,6 @@ insmod arm.ko
 - Hit Enter to begin the sequence
 - Hit ESC to stop the sequence and start again!
 
+## Report
+[Link to the report](Report)
+
