@@ -35,5 +35,5 @@ insmod arm.ko
 - Hit ESC to stop the sequence and start again!
 
 ## Report
-[Link to the report](Report/EC535_Final Report.pdf)
+[Link to the report](Report)
 
